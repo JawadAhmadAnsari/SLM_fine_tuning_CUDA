@@ -1,0 +1,15 @@
+autoeval:
+  dataset_path: "bitext/Bitext-customer-support-llm-chatbot-training-dataset"  
+  enable: true
+  save_reference: true
+
+drift:
+  enable: true
+  accuracy_drop_threshold: 0.05      # warning threshold
+  retrain_threshold: 0.10             # hard retrain trigger
+  auto_retrain: true                  # enable retraining
+
+scheduler:
+  run_after_training: true
+  run_daily: false
+  run_weekly: true

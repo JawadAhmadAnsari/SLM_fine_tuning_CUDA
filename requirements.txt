@@ -1,0 +1,29 @@
+# Core ML and NLP libraries
+torch
+transformers
+datasets
+langchain
+chromadb
+pandas
+openpyxl
+pypdf
+sentence-transformers
+langfuse
+
+# LoRA / PEFT fine-tuning support
+peft
+trl
+
+# Experiment tracking and deployment
+mlflow
+boto3
+python-dotenv
+huggingface_hub
+
+# Configuration and Notebooks
+pyyaml
+jupyter
+ipywidgets
+gradio
+reportlab
+ragas

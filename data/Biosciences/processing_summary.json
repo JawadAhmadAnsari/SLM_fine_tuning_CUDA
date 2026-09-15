@@ -1,0 +1,75 @@
+{
+  "total_pdfs": 11,
+  "processed": 11,
+  "failed": 0,
+  "total_pages": 145,
+  "total_qa_pairs": 5662,
+  "pdf_results": [
+    {
+      "pdf": "americangenetic.pdf",
+      "status": "success",
+      "pages": 16,
+      "qa_pairs": 748
+    },
+    {
+      "pdf": "article (3).pdf",
+      "status": "success",
+      "pages": 3,
+      "qa_pairs": 172
+    },
+    {
+      "pdf": "Colossal Biosciences.pdf",
+      "status": "success",
+      "pages": 29,
+      "qa_pairs": 1043
+    },
+    {
+      "pdf": "genbioteachnology.pdf",
+      "status": "success",
+      "pages": 6,
+      "qa_pairs": 221
+    },
+    {
+      "pdf": "interviewquestion.pdf",
+      "status": "success",
+      "pages": 6,
+      "qa_pairs": 246
+    },
+    {
+      "pdf": "nair-2012-profile-of-george-m-church.pdf",
+      "status": "success",
+      "pages": 3,
+      "qa_pairs": 152
+    },
+    {
+      "pdf": "philippidis-2022-form-(bio)-follows-function-software-platform-targets-synbio.pdf",
+      "status": "success",
+      "pages": 7,
+      "qa_pairs": 245
+    },
+    {
+      "pdf": "researchpaper.full.pdf",
+      "status": "success",
+      "pages": 68,
+      "qa_pairs": 2483
+    },
+    {
+      "pdf": "s44319-025-00474-w.pdf",
+      "status": "success",
+      "pages": 2,
+      "qa_pairs": 110
+    },
+    {
+      "pdf": "science.ady0869.pdf",
+      "status": "success",
+      "pages": 2,
+      "qa_pairs": 102
+    },
+    {
+      "pdf": "stemcell.pdf",
+      "status": "success",
+      "pages": 3,
+      "qa_pairs": 140
+    }
+  ]
+}

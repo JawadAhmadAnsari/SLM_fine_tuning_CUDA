@@ -1,0 +1,21 @@
+# Secrets
+.env
+.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# Mac System Files
+.DS_Store
+
+# Training Outputs (Too large for GitHub)
+outputs/
+models/
+*.pt
+*.safetensors
+
+# IDE settings
+.vscode/

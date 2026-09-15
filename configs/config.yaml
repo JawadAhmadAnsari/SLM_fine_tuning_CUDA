@@ -1,0 +1,59 @@
+# configs/config.yaml
+
+# Model Configuration
+model:
+  # CRITICAL: Mistral 7B requires ~6GB VRAM. 
+  # We switched to Phi-3-mini (3.8B) which fits your 4GB RTX 3050.
+  base_model: "unsloth/Phi-3-mini-4k-instruct"
+  # base_model: "unsloth/gemma-2b-it-bnb-4bit" # Alternative ultra-light option
+  max_seq_length: 1024 # Reduced from 2048 to save VRAM
+  dtype: null 
+  load_in_4bit: True
+
+# LoRA Configuration
+lora:
+  r: 16
+  lora_alpha: 16
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+  lora_dropout: 0
+  bias: "none"
+  use_gradient_checkpointing: True
+  use_rslora: False
+  loftq_config: null
+
+# Dataset Configuration
+dataset:
+  path: "bitext/Bitext-customer-support-llm-chatbot-training-dataset"
+
+# Training Arguments
+training:
+  per_device_train_batch_size: 1  # MUST be 1 for 4GB VRAM
+  gradient_accumulation_steps: 8  # Increased to 8 to compensate for batch size 1
+  warmup_steps: 5
+  max_steps: 60
+  learning_rate: 0.0002
+  fp16: False 
+  bf16: True       # RTX 3050 supports BF16 (Ampere), better stability than FP16
+  logging_steps: 1
+  optim: "paged_adamw_8bit" # CRITICAL: Offloads optimizer state to RAM if VRAM full
+  weight_decay: 0.01
+  lr_scheduler_type: "linear"
+  seed: 42
+  output_dir: "./outputs"
+  push_to_hub: True # Ensure you have HUGGING_FACE_TOKEN in .env
+
+# MLflow Configuration
+mlflow:
+  experiment_name: "SLM_FineTuning_Experiments"
+  run_name: "phi-3-mini-customer-support"
+
+# Deployment Configuration
+deployment:
+  hf_hub_repo: "jawadahmadansari/SLM-fine-tuned-model-local"
