@@ -1,8 +1,21 @@
+# CUDA 12.4 wheels for torch/xformers (the cu121 index has no Windows xformers build for torch 2.5.1)
+--extra-index-url https://download.pytorch.org/whl/cu124
+
 # Core ML and NLP libraries
-torch
-transformers
-datasets
+# Pinned: this set is tested together (unsloth <-> torch/transformers/trl/peft are tightly coupled)
+torch==2.5.1
+# unsloth dependency; pinned so pip uses the prebuilt cu124 Windows wheel instead of building from source
+xformers==0.0.29.post1
+# unsloth dependency; 3.1.x is the line matching torch 2.5, and it bundles TinyCC so no Windows SDK is needed
+triton-windows==3.1.0.post17; sys_platform == "win32"
+transformers==4.57.6
+datasets==4.3.0
+evaluate==0.4.6
+rouge_score==0.1.2
+psutil==7.2.2
 langchain
+langchain-community==0.4.1
+langchain-text-splitters==1.1.0
 chromadb
 pandas
 openpyxl
@@ -11,8 +24,10 @@ sentence-transformers
 langfuse
 
 # LoRA / PEFT fine-tuning support
-peft
-trl
+# NOTE: unsloth_zoo pulls in torchao>=0.13, which breaks on torch 2.5.1 -> run `pip uninstall -y torchao` after installing
+unsloth==2026.1.4
+peft==0.18.1
+trl==0.24.0
 
 # Experiment tracking and deployment
 mlflow
@@ -24,6 +39,12 @@ huggingface_hub
 pyyaml
 jupyter
 ipywidgets
-gradio
+gradio==6.5.1
 reportlab
-ragas
+
+# Testing
+pytest==8.4.2
+
+# Evaluation
+ragas==0.4.3
+openai==2.17.0

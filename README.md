@@ -1,6 +1,8 @@
-# Enterprise SLM Fine-Tuning Framework on Nvidia RTX 3050 Laptop (CUDA)
+# SLM Fine-Tuning Pipeline on an Nvidia RTX 3050 Laptop (CUDA)
 
-This repository provides a production-ready framework for fine-tuning Small Language Models (SLMs) for specialized enterprise tasks. It is built for efficiency, reproducibility, and scalability, leveraging Unsloth for memory-optimized training and DagsHub for collaborative experiment tracking.
+This repository is a reference pipeline for fine-tuning a Small Language Model (Phi-3-mini, 4-bit + LoRA) into a customer-support assistant on a 4 GB consumer GPU. It covers training, evaluation on a held-out split, simple drift detection, and a RAG-backed Gradio demo. It uses Unsloth for memory-efficient training and, optionally, MLflow (e.g. on DagsHub) and Langfuse for tracking.
+
+It is a learning/prototyping project, not a hardened production system: evaluation uses a small sample and a lexical metric (ROUGE-L), and the RAG documents are generated sample data.
 
 This project is compatible with **Google Colab** and standard local development environments, including Native Windows environments.
 
@@ -10,31 +12,31 @@ This project is compatible with **Google Colab** and standard local development 
 
 The fine-tuning pipeline is designed to be configuration-driven, ensuring that experiments are reproducible and easy to manage without changing the source code. The entire lifecycle, encompassing training, evaluation, and drift detection, is orchestrated by `src/controller.py`.
 
-1.  **Configuration Loading**: The process starts when the main training script (`scripts/train.py`) is executed. It calls the `train()` function in `src/train.py`, which begins by loading all hyperparameters from `configs/config.yaml` using the `get_config()` utility from `src/utils.py`.
+1.  **Configuration Loading**: `get_config()` in `src/utils.py` merges `configs/config.yaml` and `configs/autoeval.yaml`. The `OUTPUT_DIR` environment variable, if set, overrides `training.output_dir`.
 
-2.  **Secret Management**: Sensitive credentials (like API tokens for DagsHub and Hugging Face) are loaded from a `.env` file at the project root using the `python-dotenv` library. This keeps secrets out of version control.
+2.  **Secret Management**: Credentials (MLflow/DagsHub, Hugging Face, Langfuse, OpenAI) are loaded from a `.env` file at the project root (see `.env.example`) by `src/observability.py`. All of them are optional except where noted.
 
-3.  **RAG (Retrieval Augmented Generation)**: The framework now includes a RAG module to provide context from local documents. `src/rag.py` uses `LangChain` and `ChromaDB` to index PDF and Excel documents from the `data/` directory into a knowledge base for context retrieval during inference.
+3.  **Data Preparation** (`src/data.py`): The Bitext customer-support dataset (`dataset.path`) ships only a `train` split, so a fixed-seed held-out test split (`dataset.test_size`, `dataset.split_seed`) is carved out and never trained on. Bitext's `{{Order Number}}`-style template placeholders are replaced with realistic values or neutral wording.
 
-4.  **Data Preparation**: The dataset specified in the `dataset.path` of the config is loaded from Hugging Face. The `src/data.py` module contains functions like `format_prompt` which transform the raw data into the structured input format required by the model for fine-tuning.
+4.  **Prompt Format** (`src/utils.py`): A single `format_prompt()` built on the model's native chat template is used by training, evaluation, inference, and the Gradio app. Training examples end with the EOS token so the model learns to stop. Long chats are trimmed to fit `max_seq_length`.
 
-5.  **Model Loading**: The base model is loaded using `src/model.py`. This module uses Unsloth's `FastLanguageModel` for memory-optimized loading (e.g., in 4-bit precision). It then applies a LoRA (Low-Rank Adaptation) configuration, also defined in `config.yaml`, to prepare the model for efficient fine-tuning.
+5.  **Model Loading** (`src/model.py`): Unsloth's `FastLanguageModel` loads the pre-quantized 4-bit base model and applies the LoRA configuration from `config.yaml`.
 
-6.  **Training Execution**: The training process is managed by the `trl.SFTTrainer`. This trainer is configured with `transformers.TrainingArguments` and the LoRA-adapted model. All parameters for the trainer (batch size, learning rate, etc.) are pulled directly from the `training` section of `config.yaml`.
+6.  **Training Execution** (`src/train.py`): `trl.SFTTrainer` with an `SFTConfig` built from the `training` section of `config.yaml`. The adapter is saved to `<output_dir>/final_model`.
 
-7.  **Experiment Tracking**: Throughout the training run, all parameters, metrics, and model artifacts are logged to MLflow. The MLflow tracking URI and credentials are automatically sourced from the `.env` file, seamlessly integrating with platforms like DagsHub.
+7.  **Experiment Tracking** (optional): If `MLFLOW_TRACKING_URI` is set, params and metrics are logged to MLflow under `mlflow.experiment_name`; otherwise training runs untracked.
+
+8.  **RAG** (`src/rag.py`): LangChain + ChromaDB index the PDF/Excel documents in `data/` and retrieve context at inference time.
 
 ---
 
-## Self-Healing & Observability
+## Evaluation, Drift & Observability
 
-This framework incorporates robust self-healing and observability features to ensure model reliability and performance in production:
+* **Auto-evaluation** (`src/autoeval_engine.py`): Loads the fine-tuned model from `<output_dir>/final_model` (4-bit) and scores `autoeval.num_samples` held-out examples with ROUGE-L F1 against the reference answers.
 
-* **Drift Detection**: The system continuously monitors for model degradation using `src/drift_detector.py`. It compares current model performance against a baseline and identifies significant drops in accuracy.
+* **Drift Detection** (`src/drift_detector.py`): Compares the current score against a saved baseline. A drop above `drift.accuracy_drop_threshold` logs a warning; above `drift.retrain_threshold` it triggers retraining when `drift.auto_retrain` is true. Drift checks run when you invoke them (`--task drift`); nothing runs on a schedule by itself.
 
-* **Automated Retraining**: Thresholds for triggering automated retraining are configurable in `configs/autoeval.yaml`. If accuracy degradation exceeds these predefined limits, the system can initiate a retraining workflow.
-
-* **Comprehensive Observability with Langfuse**: All critical events, including model inputs, outputs, performance metrics, and drift detection decisions, are logged as full traces to [Langfuse](https://langfuse.com). This provides deep insights for debugging, performance monitoring, and understanding model behavior in real-time.
+* **Langfuse tracing** (optional): When Langfuse keys are set, pipeline events (training start/end, evaluation results, drift decisions) are logged to a trace per controller run.
 
 ---
 
@@ -47,11 +49,10 @@ You can run this project either on Google Colab or in a Local Windows/Linux envi
 1.  **Open Notebook**: Open `notebooks/colab_controller.ipynb` in Google Colab.
 2.  **Configure Secrets**:
     * Click the **key icon (🔑)** in the left sidebar.
-    * Add the following secrets: `MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD`, `HUGGING_FACE_TOKEN`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`.
-    * Sign up for [Langfuse](https://langfuse.com) to get your API keys (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`) and ensure `LANGFUSE_HOST` is set to `https://cloud.langfuse.com`.
+    * Add any of these secrets (all optional; missing ones are skipped): `MLFLOW_TRACKING_URI`, `MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD`, `HUGGING_FACE_TOKEN`, `OPENAI_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`, and `GIT_TOKEN` (only if the repository is private).
+    * For Langfuse, sign up at [langfuse.com](https://langfuse.com) and set `LANGFUSE_HOST` to `https://cloud.langfuse.com`.
     * Ensure "Notebook access" is enabled for each.
-    * The `MLFLOW_TRACKING_URI` can be set directly in the notebook.
-3.  **Run Notebook**: Execute the cells sequentially. The notebook will mount your Drive, install all dependencies, and automatically handle data generation, training, and evaluation steps.
+3.  **Run Notebook**: Execute the cells in order. The notebook clones this repository, installs dependencies, then runs training, evaluation and drift checks through `src/controller.py`, followed by the RAG evaluation and the Gradio demo.
 
 ### Local Development (Native Windows & CUDA)
 
@@ -65,8 +66,8 @@ If you are running natively on Windows, follow these steps strictly:
 
 2.  **Clone the Repository**:
     ```bash
-    git clone <your-repo-url>
-    cd <your-repo-name>
+    git clone https://github.com/JawadAhmadAnsari/SLM_fine_tuning_CUDA.git
+    cd SLM_fine_tuning_CUDA
     ```
 
 3.  **Launch the Correct Terminal**:
@@ -87,14 +88,12 @@ If you are running natively on Windows, follow these steps strictly:
     * Copy the `python311.lib` file into this new `.venv\libs\` folder.
 
 6.  **Install Dependencies**:
-    * Install Unsloth (example for CUDA 12.1):
-        ```cmd
-        pip install "unsloth[cu121] @ git+[https://github.com/unslothai/unsloth.git](https://github.com/unslothai/unsloth.git)"
-        ```
-    * Install the remaining packages:
+    * `requirements.txt` pins a tested set of versions (torch 2.5.1 + CUDA 12.4, xformers, triton-windows 3.1, transformers, trl, unsloth, peft, ...):
         ```cmd
         pip install -r requirements.txt
+        pip uninstall -y torchao
         ```
+    * The `torchao` uninstall is required: `unsloth_zoo` pulls in `torchao>=0.13`, which needs a newer torch and crashes on torch 2.5.1 (`module 'torch' has no attribute 'int1'`) as soon as `transformers` or `evaluate` is imported. Unsloth only uses torchao for optional FP8/QAT features that this project doesn't use.
 
 7.  **Patch Triton for CUDA 13.0 (If Applicable)**:
     * If you are using CUDA 13.0, Triton will throw a `RuntimeError: Triton only support CUDA 10.0 or higher`.
@@ -109,6 +108,8 @@ If you are running natively on Windows, follow these steps strictly:
 8.  **Configure Credentials**:
     * Create a `.env` file from the example: `copy .env.example .env`.
     * Edit `.env` to add your `MLFLOW_TRACKING_URI`, `MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD`, and `HUGGING_FACE_TOKEN` (Ensure this is a **Write** access token).
+    * MLflow is optional: if `MLFLOW_TRACKING_URI` is unset, training runs without experiment tracking. If it is set, provide both username and password (or neither).
+    * Optionally set `OUTPUT_DIR` to override `training.output_dir` from `config.yaml`.
 
 ---
 
@@ -118,7 +119,7 @@ All aspects of the fine-tuning process are controlled by `configs/config.yaml`. 
 
 | Section      | Parameter                       | Type    | Description                                                                                             |
 |--------------|---------------------------------|---------|---------------------------------------------------------------------------------------------------------|
-| **model** | `base_model`                    | String  | The identifier of the base model on Hugging Face (e.g., `unsloth/mistral-7b-v0.2-bnb-4bit`).            |
+| **model** | `base_model`                    | String  | The identifier of the base model on Hugging Face (default: `unsloth/Phi-3-mini-4k-instruct-bnb-4bit`).  |
 |              | `max_seq_length`                | Integer | The maximum sequence length for the model's context window.                                             |
 |              | `load_in_4bit`                  | Boolean | If `True`, loads the model in 4-bit precision using Unsloth for significant memory savings.             |
 | **lora** | `r`                             | Integer | The rank of the LoRA matrices. A higher rank means more trainable parameters.                           |
@@ -127,6 +128,7 @@ All aspects of the fine-tuning process are controlled by `configs/config.yaml`. 
 |              | `lora_dropout`                  | Float   | Dropout probability for the LoRA layers to prevent overfitting.                                         |
 |              | `use_rslora`                    | Boolean | If `True`, enables Rank-Stabilized LoRA, which can improve stability.                                   |
 | **dataset** | `path`                          | String  | The Hugging Face path to the training dataset.                                                          |
+|              | `test_size` / `split_seed`      | Integer | Size and seed of the held-out test split. Keep fixed so test rows never leak into training.             |
 | **training** | `per_device_train_batch_size`   | Integer | The batch size per GPU for training.                                                                    |
 |              | `gradient_accumulation_steps` | Integer | Number of steps to accumulate gradients before performing a weight update.                              |
 |              | `max_steps`                     | Integer | The total number of training steps to perform.                                                          |
@@ -154,11 +156,60 @@ We welcome contributions from the team. Please follow these standard engineering
 
 4.  **Keep Pull Requests Focused**: A Pull Request (PR) should address a single, specific issue or feature. Avoid bundling unrelated changes into one PR.
 
-5. **Review and Test**: Before submitting a PR, thoroughly test your changes. Ensure that the training script runs and that your changes have not introduced any regressions. Once submitted, another team member should review your PR.
+5. **Review and Test**: Before submitting a PR, run the smoke tests (`pytest -q`) and make sure training still runs. Once submitted, another team member should review your PR.
 
 ## Standard Workflow
 
-### Step 1: Generate Knowledge Base
-Run the following script to index your local documents into a ChromaDB vector store.
+Run all commands from the repository root. The controller is run as a module (`python -m src.controller`) so that `src.*` imports resolve.
+
+### Step 1: Generate the RAG Sample Documents
+Creates `data/product_catalog.xlsx` and `data/employee_handbook.pdf` (skipped if they already exist). They are indexed into ChromaDB automatically when the RAG evaluation or the app starts.
 ```bash
 python scripts/prepare_rag_data.py
+```
+
+### Step 2: Fine-Tune the Model
+Trains the LoRA adapter on the Bitext training split and saves it to `<output_dir>/final_model` (pushed to the Hub if `training.push_to_hub` is true and `HUGGING_FACE_TOKEN` is set).
+```bash
+python -m src.controller --task train
+```
+
+### Step 3: Evaluate and Save a Baseline
+Scores the fine-tuned model on the held-out split (ROUGE-L) and stores it as the drift baseline in `<output_dir>/drift/`.
+```bash
+python -m src.controller --task eval --save_baseline
+```
+
+### Step 4: Check for Drift
+Re-evaluates and compares against the baseline. If the drop exceeds `drift.retrain_threshold` and `drift.auto_retrain` is true, it retrains and saves a new baseline.
+```bash
+python -m src.controller --task drift
+```
+`--task all` runs steps 2–4 back to back.
+
+### Step 5: Evaluate the RAG Pipeline (optional)
+Answers a small golden set with retrieved context and scores it with RAGAS. Requires `OPENAI_API_KEY`.
+```bash
+python scripts/evaluate.py
+```
+
+### Step 6: Try the Model
+Single question from the command line:
+```bash
+python scripts/inference.py "How do I check my order status?"
+```
+Or launch the Gradio chat app (RAG-backed, streaming):
+```bash
+python deployment/app.py
+```
+
+## Testing
+
+Fast CPU-only smoke tests (no GPU, no downloads) cover config loading, the prompt format, history trimming, placeholder cleanup, the train/test split, and optional MLflow:
+```bash
+pytest -q
+```
+
+## License
+
+Released under the [MIT License](LICENSE).

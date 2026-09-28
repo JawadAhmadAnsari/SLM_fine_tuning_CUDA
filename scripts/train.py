@@ -1,13 +1,8 @@
 # scripts/train.py
-import builtins
-import psutil
-
-builtins.psutil = psutil  
 import sys
 import os
 
-# Add the src directory to the Python path
-# This allows us to import modules from src like `from train import train`
+# Add the project root to the Python path so `src.*` imports resolve
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from src.train import train

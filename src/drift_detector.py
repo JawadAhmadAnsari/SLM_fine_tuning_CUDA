@@ -1,11 +1,10 @@
 # src/drift_detector.py
 
 import os
-import mlflow
 from src.utils import get_config
 
 # NEW: observability
-from src.observability import langfuse_log_event
+from src.observability import langfuse_log_event, mlflow_run, mlflow_log_metrics
 
 
 class AccuracyDriftDetector:
@@ -49,10 +48,12 @@ class AccuracyDriftDetector:
         print(f"Accuracy Drop:     {drop:.4f}")
 
         # MLflow: metrics logging
-        with mlflow.start_run(run_name="accuracy_drift"):
-            mlflow.log_metric("baseline_accuracy", baseline)
-            mlflow.log_metric("current_accuracy", current_accuracy)
-            mlflow.log_metric("accuracy_drop", drop)
+        with mlflow_run(run_name="accuracy_drift"):
+            mlflow_log_metrics({
+                "baseline_accuracy": baseline,
+                "current_accuracy": current_accuracy,
+                "accuracy_drop": drop,
+            })
 
         # Langfuse: drift decision event
         langfuse_log_event(

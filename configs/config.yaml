@@ -4,7 +4,8 @@
 model:
   # CRITICAL: Mistral 7B requires ~6GB VRAM. 
   # We switched to Phi-3-mini (3.8B) which fits your 4GB RTX 3050.
-  base_model: "unsloth/Phi-3-mini-4k-instruct"
+  # Pre-quantized 4-bit weights: ~2.3GB download instead of ~7.6GB fp16
+  base_model: "unsloth/Phi-3-mini-4k-instruct-bnb-4bit"
   # base_model: "unsloth/gemma-2b-it-bnb-4bit" # Alternative ultra-light option
   max_seq_length: 1024 # Reduced from 2048 to save VRAM
   dtype: null 
@@ -31,6 +32,10 @@ lora:
 # Dataset Configuration
 dataset:
   path: "bitext/Bitext-customer-support-llm-chatbot-training-dataset"
+  # Bitext has only a train split; a held-out test set is carved out of it.
+  # Keep these fixed so the test set never leaks into training.
+  test_size: 500
+  split_seed: 42
 
 # Training Arguments
 training:

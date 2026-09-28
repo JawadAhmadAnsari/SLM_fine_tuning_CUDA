@@ -19,7 +19,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from src.rag import RAGEngine
 from src.model import load_model_for_inference
-from src.utils import get_config, format_prompt
+from src.utils import get_config, format_prompt, get_stop_token_ids
 
 
 def main():
@@ -82,13 +82,22 @@ def main():
         question = entry["question"]
 
         retrieved_context = rag_engine.retrieve(question)
-        prompt = format_prompt(question, history=[], context=retrieved_context)
+        max_new_tokens = 128
+        prompt = format_prompt(
+            tokenizer, question, history=[], context=retrieved_context,
+            max_prompt_tokens=config['model']['max_seq_length'] - max_new_tokens,
+        )
 
         inputs = tokenizer([prompt], return_tensors="pt").to(model.device)
-        outputs = model.generate(**inputs, max_new_tokens=128)
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            eos_token_id=get_stop_token_ids(tokenizer),
+        )
 
-        answer = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        answer = answer.split("[/INST]")[-1].strip()
+        # Decode only the newly generated tokens
+        new_tokens = outputs[0][inputs["input_ids"].shape[1]:]
+        answer = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
 
         results.append(
             {

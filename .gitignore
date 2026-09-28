@@ -1,4 +1,4 @@
-# Secrets
+# Secrets (.env.example is a template and IS committed)
 .env
 .env.example
 
@@ -7,6 +7,7 @@ __pycache__/
 *.py[cod]
 venv/
 .venv/
+.pytest_cache/
 
 # Mac System Files
 .DS_Store
@@ -14,8 +15,18 @@ venv/
 # Training Outputs (Too large for GitHub)
 outputs/
 models/
+mlruns/
 *.pt
 *.safetensors
+
+# Build artifacts (MSVC / Triton kernel compilation) — contain local paths
+*.obj
+*.lib
+*.exp
+*.pdb
+
+# Unsloth regenerates this at runtime
+unsloth_compiled_cache/
 
 # IDE settings
 .vscode/

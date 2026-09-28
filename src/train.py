@@ -1,23 +1,31 @@
 # src/train.py
 
+import builtins
 import psutil
+
+# Unsloth's generated trainer code references `psutil` without importing it.
+# Set here (not only in scripts/train.py) so the controller path works too.
+builtins.psutil = psutil
+
 from unsloth import FastLanguageModel
 import os
 import torch
-import mlflow
-from datasets import load_dataset
-from transformers import TrainingArguments
-from trl import SFTTrainer
-from dotenv import find_dotenv, load_dotenv
+from trl import SFTConfig, SFTTrainer
 
-from utils import get_config, flatten_dict
-from model import load_model_and_tokenizer
-# Removed import of _format_prompt from utils to avoid conflicts
-from observability import langfuse_log_event
+from src.utils import get_config, flatten_dict
+from src.model import load_model_and_tokenizer
+from src.data import load_splits, clean_example, format_training_example
+from src.observability import (
+    langfuse_log_event,
+    mlflow_enabled,
+    mlflow_run,
+    mlflow_log_params,
+    mlflow_log_metrics,
+)
 
 # Graceful import for observability
 try:
-    from observability import get_langfuse 
+    from src.observability import get_langfuse
 except ImportError:
     def get_langfuse(): return None
 
@@ -26,27 +34,6 @@ def print_memory_stats():
     reserved = torch.cuda.memory_reserved(0) / 1024**3
     total = gpu_stats.total_memory / 1024**3
     print(f"GPU Memory: {reserved:.2f}GB used / {total:.2f}GB total")
-
-# --- NEW LOCAL FUNCTION TO FIX DICTIONARY ISSUE ---
-def local_format_prompt(example):
-    """
-    Formats the input example into a prompt for the model.
-    Must return a DICTIONARY with a 'text' key.
-    """
-    # Extract fields (Bitext dataset uses 'instruction' and 'response')
-    instruction = example.get('instruction', '')
-    response = example.get('response', '')
-    
-    # Create the text
-    text = f"""### Instruction:
-{instruction}
-
-### Response:
-{response}"""
-
-    # CRITICAL FIX: Return a DICTIONARY
-    return {"text": text}
-# --------------------------------------------------
 
 def train(trace=None):
     """
@@ -66,34 +53,10 @@ def train(trace=None):
         print("   Forcing batch_size=1 to prevent crash.")
         config['training']['per_device_train_batch_size'] = 1
 
-    # # 3. Setup MLflow / DagsHub
-    # tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
-    # if tracking_uri:
-    #     mlflow.set_tracking_uri(tracking_uri)
-    # mlflow.set_experiment(config['mlflow']['experiment_name'])
-
-    # FORCE LOAD .env from the project root
-    # This looks for .env in the folder *above* src/
-    from dotenv import find_dotenv, load_dotenv
-    env_path = find_dotenv(usecwd=True) 
-    load_dotenv(dotenv_path=env_path, override=True)
-    
-    print(f"Loaded configuration. .env found at: {env_path}")
-
-    # --- DEBUG: CHECK CREDENTIALS ---
-    username = os.getenv("MLFLOW_TRACKING_USERNAME")
-    password = os.getenv("MLFLOW_TRACKING_PASSWORD")
-    
-    if not username or not password:
-        print("❌ CRITICAL ERROR: MLFLOW Credentials not found!")
-        print("   Please ensure your .env file contains:")
-        print("   MLFLOW_TRACKING_USERNAME")
-        print("   MLFLOW_TRACKING_PASSWORD")
-        return # Stop execution to prevent 401 error
-    else:
-        print(f"✅ Credentials loaded for user: {username}")
-        # Mask password for security
-        print(f"✅ Password loaded: {'*' * 5}...{password[-4:]}")
+    # 3. MLflow (optional): enabled only if MLFLOW_TRACKING_URI is set (.env is
+    # loaded by src.observability). Misconfigured credentials raise here, before
+    # any GPU work, instead of silently skipping training.
+    use_mlflow = mlflow_enabled()
 
     # 4. Langfuse Setup
     lf = get_langfuse()
@@ -106,14 +69,20 @@ def train(trace=None):
 
     # 6. Load Dataset
     print("Loading and formatting dataset...")
-    dataset = load_dataset(config['dataset']['path'], split="train")
-    
-    # USE THE LOCAL FUNCTION HERE
-    formatted_dataset = dataset.map(local_format_prompt)
+    # Train only on the train partition; the held-out test split is reserved for autoeval
+    train_dataset, test_dataset = load_splits(config)
+    print(f"Train rows: {len(train_dataset)} | Held-out test rows: {len(test_dataset)}")
+
+    # Replace {{Placeholders}}, then apply the shared chat-template format (ends in EOS)
+    formatted_dataset = train_dataset.map(clean_example).map(
+        format_training_example,
+        fn_kwargs={"tokenizer": tokenizer},
+        remove_columns=train_dataset.column_names,
+    )
     print("Dataset formatted successfully.")
 
     # 7. Configure Training
-    training_args = TrainingArguments(
+    training_args = SFTConfig(
         per_device_train_batch_size=config['training']['per_device_train_batch_size'],
         gradient_accumulation_steps=config['training']['gradient_accumulation_steps'],
         warmup_steps=config['training']['warmup_steps'],
@@ -127,34 +96,34 @@ def train(trace=None):
         lr_scheduler_type=config['training']['lr_scheduler_type'],
         seed=config['training']['seed'],
         output_dir=config['training']['output_dir'],
-        report_to="mlflow",
+        report_to="mlflow" if use_mlflow else "none",
         gradient_checkpointing=True, 
         gradient_checkpointing_kwargs={"use_reentrant": False},
+        dataset_text_field="text",
+        max_length=config['model']['max_seq_length'],
+        packing=False,
     )
 
     # 8. Trainer
     trainer = SFTTrainer(
         model=model,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         train_dataset=formatted_dataset,
-        dataset_text_field="text",
-        max_seq_length=config['model']['max_seq_length'],
         args=training_args,
-        packing=False, 
     )
 
     # 9. Start Training
     print("Starting training...")
-    with mlflow.start_run(run_name=config['mlflow']['run_name']) as run:
-        mlflow.log_params(flatten_dict(config))
-        
+    with mlflow_run(run_name=config['mlflow']['run_name']):
+        mlflow_log_params(flatten_dict(config))
+
         if lf:
             langfuse_log_event(trace, name="training_start", input=config['model'])
 
         trainer_stats = trainer.train()
 
         # Log & Save
-        mlflow.log_metric("train_loss", trainer_stats.training_loss)
+        mlflow_log_metrics({"train_loss": trainer_stats.training_loss})
         
         final_output_dir = os.path.join(config['training']['output_dir'], "final_model")
         trainer.save_model(final_output_dir)
@@ -165,7 +134,7 @@ def train(trace=None):
         if hf_token and config['training'].get('push_to_hub'):
             print("Pushing to Hugging Face...")
             trainer.model.push_to_hub(config['deployment']['hf_hub_repo'], token=hf_token)
-            trainer.tokenizer.push_to_hub(config['deployment']['hf_hub_repo'], token=hf_token)
+            tokenizer.push_to_hub(config['deployment']['hf_hub_repo'], token=hf_token)
 
     print("Training finished!")
 

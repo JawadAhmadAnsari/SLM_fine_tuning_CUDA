@@ -1,68 +1,70 @@
 # src/autoeval_engine.py
 
-import mlflow
+import os
+
 import torch
-from datasets import load_dataset
-from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM
 import evaluate
 
-from src.utils import get_config
+from src.utils import get_config, format_prompt, get_stop_token_ids
+from src.data import load_splits, clean_example
+from src.model import load_model_for_inference
 
 # 🔹 NEW: observability (SAFE)
-from src.observability import langfuse_log_event
+from src.observability import langfuse_log_event, mlflow_run, mlflow_log_metrics
 
 
 class AutoEvalEngine:
     """
-    Evaluates model performance on a gold test set.
-    Accuracy degradation = model drift.
+    Evaluates the fine-tuned model on the held-out test set.
+    Score degradation = model drift.
+
+    Metric is ROUGE-L F1 (0-1) against the reference response. Exact match is
+    ~0 on paragraph-length answers, so it could never move enough to signal drift.
     """
 
     def __init__(self):
         self.config = get_config()
         self.eval_config = self.config["autoeval"]
-        self.device = 0 if torch.cuda.is_available() else -1
 
         print("Loading evaluation dataset...")
-        self.dataset = load_dataset(
-            self.eval_config["dataset_path"],
-            split="test[:50]"  # limit for speed
-        )
+        _, test_dataset = load_splits(self.config)
+        num_samples = min(self.eval_config["num_samples"], len(test_dataset))
+        # Same placeholder cleanup as training, so references match what the model learned
+        self.dataset = test_dataset.select(range(num_samples)).map(clean_example)
 
-        model_path = self.config["model"]["base_model"]
-        print(f"Loading model: {model_path}")
-
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            torch_dtype=torch.float16 if self.device == 0 else torch.float32,
-            device_map="auto" if self.device == 0 else None
-        )
-
-        self.generator = pipeline(
-            "text-generation",
-            model=self.model,
-            tokenizer=self.tokenizer
-        )
+        # Evaluate the fine-tuned model, not the untouched base model.
+        # Loaded in 4-bit via Unsloth (model.load_in_4bit) so it fits on a 4 GB GPU.
+        self.model_path = os.path.join(self.config["training"]["output_dir"], "final_model")
+        if not os.path.isdir(self.model_path):
+            raise FileNotFoundError(
+                f"Fine-tuned model not found at {self.model_path}. Run training first."
+            )
+        print(f"Loading model: {self.model_path}")
+        self.model, self.tokenizer = load_model_for_inference(self.config, self.model_path)
+        self.stop_token_ids = get_stop_token_ids(self.tokenizer)
 
         # Metrics
-        self.exact_match = evaluate.load("exact_match")
+        self.rouge = evaluate.load("rouge")
 
+    @torch.inference_mode()
     def generate_answer(self, instruction: str) -> str:
-        prompt = f"Instruction: {instruction}\nResponse:"
-        output = self.generator(
-            prompt,
-            max_new_tokens=64,
-            pad_token_id=self.tokenizer.eos_token_id
+        prompt = format_prompt(self.tokenizer, instruction)
+        inputs = self.tokenizer([prompt], return_tensors="pt").to(self.model.device)
+        output = self.model.generate(
+            **inputs,
+            max_new_tokens=self.eval_config["max_new_tokens"],
+            do_sample=False,
+            eos_token_id=self.stop_token_ids,
+            pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
         )
-        text = output[0]["generated_text"]
-        return text.replace(prompt, "").strip()
+        new_tokens = output[0][inputs["input_ids"].shape[1]:]
+        return self.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
 
     def run(self, trace=None):
         """
-        Runs evaluation and returns accuracy.
+        Runs evaluation and returns the ROUGE-L score (used as the drift score).
         """
-        print("Running auto-evaluation (accuracy-based)...")
+        print("Running auto-evaluation (ROUGE-L)...")
 
         predictions, references = [], []
 
@@ -72,27 +74,28 @@ class AutoEvalEngine:
             predictions.append(pred)
             references.append(sample["response"])
 
-        metrics = self.exact_match.compute(
+        metrics = self.rouge.compute(
             predictions=predictions,
-            references=references
+            references=references,
+            rouge_types=["rougeL"],
         )
 
-        accuracy = metrics["exact_match"]
-        print(f"\nAccuracy: {accuracy:.4f}")
+        accuracy = float(metrics["rougeL"])
+        print(f"\nROUGE-L: {accuracy:.4f}")
 
-        # MLflow 
-        with mlflow.start_run(run_name="autoeval_accuracy"):
-            mlflow.log_metric("accuracy", accuracy)
+        # MLflow
+        with mlflow_run(run_name="autoeval_accuracy"):
+            mlflow_log_metrics({"rougeL": accuracy})
 
         # Langfuse: evaluation result
         langfuse_log_event(
             trace,
             name="golden_evaluation_completed",
             output={
-                "accuracy": accuracy,
-                "dataset": self.eval_config["dataset_path"],
+                "rougeL": accuracy,
+                "dataset": self.config["dataset"]["path"],
                 "num_samples": len(self.dataset),
-                "model": self.config["model"]["base_model"],
+                "model": self.model_path,
             },
         )
 

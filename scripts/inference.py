@@ -9,7 +9,7 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from src.model import load_model_for_inference
-from src.utils import get_config, format_prompt
+from src.utils import get_config, format_prompt, get_stop_token_ids
 
 def run_inference(prompt: str):
     """
@@ -35,12 +35,17 @@ def run_inference(prompt: str):
     streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
 
     # Use the centralized prompt formatting function
-    formatted_prompt = format_prompt(prompt)
-    
+    formatted_prompt = format_prompt(tokenizer, prompt)
+
     inputs = tokenizer([formatted_prompt], return_tensors="pt").to(model.device)
 
     # Generate response
-    _ = model.generate(**inputs, streamer=streamer, max_new_tokens=128)
+    _ = model.generate(
+        **inputs,
+        streamer=streamer,
+        max_new_tokens=256,
+        eos_token_id=get_stop_token_ids(tokenizer),
+    )
 
 
 if __name__ == "__main__":

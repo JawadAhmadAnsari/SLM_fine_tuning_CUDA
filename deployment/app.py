@@ -10,7 +10,8 @@ from transformers import TextIteratorStreamer
 # Add the src directory to the Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from src.utils import format_prompt, get_config
+from src.utils import format_prompt, get_config, get_stop_token_ids
+from src.data import PLACEHOLDER_RE
 from src.model import load_model_for_inference
 from src.rag import RAGEngine
 
@@ -19,6 +20,8 @@ config = get_config()
 output_dir = config['training']['output_dir']
 model_path = f"{output_dir}/final_model"
 model, tokenizer = load_model_for_inference(config, model_path)
+MAX_SEQ_LENGTH = config['model']['max_seq_length']
+MAX_NEW_TOKENS = 256
 
 # --- RAG Engine Initialization ---
 rag_engine = RAGEngine()
@@ -35,25 +38,36 @@ def run_inference(message, history):
     Generates a response from the model based on the user's message and conversation history.
     """
     context = rag_engine.retrieve(message)
-    prompt = format_prompt(message, history, context)
+    # Trim old turns / context so prompt + reply fit in max_seq_length
+    prompt = format_prompt(
+        tokenizer, message, history, context,
+        max_prompt_tokens=MAX_SEQ_LENGTH - MAX_NEW_TOKENS,
+    )
     inputs = tokenizer([prompt], return_tensors="pt").to(model.device)
-    
+
     # Use a TextIteratorStreamer for real-time, token-by-token output.
     streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
-    
+
     # Run generation in a separate thread
-    generation_kwargs = dict(inputs, streamer=streamer, max_new_tokens=256)
+    generation_kwargs = dict(
+        inputs,
+        streamer=streamer,
+        max_new_tokens=MAX_NEW_TOKENS,
+        eos_token_id=get_stop_token_ids(tokenizer),
+    )
     thread = Thread(target=model.generate, kwargs=generation_kwargs)
     thread.start()
-    
-    # Yield partial responses from the streamer
+
+    # ChatInterface expects the full response so far on each yield.
+    # Safety net: never show a leftover {{Placeholder}} to a customer.
+    response = ""
     for new_text in streamer:
-        yield new_text
+        response += new_text
+        yield PLACEHOLDER_RE.sub(r"\1", response)
 
 # --- Gradio UI ---
 with gr.Blocks() as demo:
     gr.Markdown(f"# Customer Support SLM")
-    gr.Markdown(f"This interface is powered by the fine-tuned model from the `{model_path}` repository.")
     
     gr.ChatInterface(
         fn=run_inference,
