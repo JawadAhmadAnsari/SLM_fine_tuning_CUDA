@@ -94,6 +94,34 @@ def test_placeholders_are_replaced_consistently():
     assert data.clean_example(row) == cleaned        # deterministic
 
 
+def test_answer_reuses_customer_values_across_different_slots():
+    # Bitext names one entity with different slots in question and answer
+    cleaned = data.clean_example({
+        "instruction": "invoice from {{Person Name}}, refund of {{Refund Amount}} dollars",
+        "response": "The bill from {{Salutation}} {{Client Last Name}} for "
+                    "{{Currency Symbol}}{{Money Amount}} is ready.",
+    })
+    first, last = cleaned["instruction"].split(",")[0].split()[-2:]
+    amount = cleaned["instruction"].split()[-2]
+    assert f" {last} for ${amount} is ready." in cleaned["response"]
+    assert first + " " + last in [f"{p[0]} {p[1]}" for p in data.PEOPLE]
+
+
+def test_answer_never_invents_values_the_customer_did_not_give():
+    cleaned = data.clean_example({
+        "instruction": "i paid for this item, help me get a refund on my platinum acocunt",
+        "response": "Please share the {{Order Number}} or {{Tracking Number}}. Your refund of "
+                    "{{Currency Symbol}}{{Refund Amount}} for the invoice with the number "
+                    "#{{Invoice Number}} from {{Salutation}} {{Client Last Name}} arrives in "
+                    "{{Date Range}} business days to your {{Account Type}} account.",
+    })
+    assert cleaned["response"] == (
+        "Please share the order number or tracking number. Your refund of "
+        "the amount you mentioned for the invoice from the person you mentioned "
+        "arrives in a few business days to your Platinum account."
+    )
+
+
 def test_split_is_deterministic_and_disjoint(monkeypatch):
     rows = {
         "instruction": [f"question {i}" for i in range(200)],

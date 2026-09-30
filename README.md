@@ -16,7 +16,7 @@ The fine-tuning pipeline is designed to be configuration-driven, ensuring that e
 
 2.  **Secret Management**: Credentials (MLflow/DagsHub, Hugging Face, Langfuse, OpenAI) are loaded from a `.env` file at the project root (see `.env.example`) by `src/observability.py`. All of them are optional except where noted.
 
-3.  **Data Preparation** (`src/data.py`): The Bitext customer-support dataset (`dataset.path`) ships only a `train` split, so a fixed-seed held-out test split (`dataset.test_size`, `dataset.split_seed`) is carved out and never trained on. Bitext's `{{Order Number}}`-style template placeholders are replaced with realistic values or neutral wording.
+3.  **Data Preparation** (`src/data.py`): The Bitext customer-support dataset (`dataset.path`) ships only a `train` split, so a fixed-seed held-out test split (`dataset.test_size`, `dataset.split_seed`) is carved out and never trained on. Bitext's `{{Order Number}}`-style template placeholders are replaced with realistic values or neutral wording. Values are sampled only for slots in the customer's message and reused in the answer (even when Bitext labels them differently, e.g. `{{Person Name}}` → `{{Client Last Name}}`); slots only in the answer get neutral wording ("the order number", "the amount you mentioned"), so the model never learns to state order numbers or refund amounts the customer didn't give.
 
 4.  **Prompt Format** (`src/utils.py`): A single `format_prompt()` built on the model's native chat template is used by training, evaluation, inference, and the Gradio app. Training examples end with the EOS token so the model learns to stop. Long chats are trimmed to fit `max_seq_length`.
 

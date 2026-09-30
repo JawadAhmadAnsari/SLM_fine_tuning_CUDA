@@ -34,28 +34,97 @@ def load_splits(config: dict):
 
 PLACEHOLDER_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
 
-# Values the customer supplies. A sampled value is used consistently within a
-# row, so if the question mentions order ORD-123456 the answer echoes it.
-ENTITY_VALUES = {
-    "order number": lambda r: f"ORD-{r.randint(100000, 999999)}",
-    "invoice number": lambda r: f"INV-{r.randint(100000, 999999)}",
-    "tracking number": lambda r: f"TRK{r.randint(10**9, 10**10 - 1)}",
-    "person name": lambda r: r.choice(["Alex Morgan", "Sam Lee", "Jordan Patel", "Maria Garcia"]),
-    "client name": lambda r: r.choice(["Alex Morgan", "Sam Lee", "Jordan Patel", "Maria Garcia"]),
-    "client full name": lambda r: r.choice(["Alex Morgan", "Sam Lee", "Jordan Patel", "Maria Garcia"]),
-    "client first name": lambda r: r.choice(["Alex", "Sam", "Jordan", "Maria"]),
-    "client last name": lambda r: r.choice(["Morgan", "Lee", "Patel", "Garcia"]),
-    "salutation": lambda r: r.choice(["Mr.", "Ms.", "Dr."]),
-    "delivery city": lambda r: r.choice(["Chicago", "Toronto", "Manchester", "Sydney"]),
-    "delivery country": lambda r: r.choice(["Canada", "the United Kingdom", "Australia", "Germany"]),
-    "currency symbol": lambda r: "$",
-    "refund amount": lambda r: str(r.choice([25, 49, 120, 300])),
-    "money amount": lambda r: str(r.choice([25, 49, 120, 300])),
-    "account type": lambda r: r.choice(["Premium", "Standard", "Business", "Gold"]),
-    "account category": lambda r: r.choice(["personal", "business", "family"]),
-    "profile type": lambda r: r.choice(["personal", "business"]),
+# Values the customer supplies. Bitext often names one thing with different
+# slots in question and answer ({{Person Name}} -> {{Salutation}} {{Client Last
+# Name}}), so slots map to a group, sampled once per row: the answer then
+# echoes exactly what the customer said.
+PEOPLE = [("Daniel", "Morgan", "Mr."), ("Sarah", "Lee", "Ms."),
+          ("James", "Patel", "Mr."), ("Maria", "Garcia", "Ms.")]
+ACCOUNT_TIERS = ["Pro", "Platinum", "Gold", "Standard", "Freemium", "Premium"]
+
+
+def _sample_person(r):
+    first, last, salutation = r.choice(PEOPLE)
+    return {"first": first, "last": last, "full": f"{first} {last}", "salutation": salutation}
+
+
+# slot -> (group, field of the group's sampled value, or None if it is a string)
+ENTITY_SLOTS = {
+    "order number": ("order", None),
+    "invoice number": ("invoice", None),
+    "tracking number": ("tracking", None),
+    "person name": ("person", "full"),
+    "client name": ("person", "full"),
+    "client full name": ("person", "full"),
+    "client first name": ("person", "first"),
+    "client last name": ("person", "last"),
+    "salutation": ("person", "salutation"),
+    "delivery city": ("city", None),
+    "delivery country": ("country", None),
+    "currency symbol": ("amount", "currency"),
+    "refund amount": ("amount", "value"),
+    "money amount": ("amount", "value"),
+    "account type": ("account", None),
+    "account category": ("account", None),
+    "profile type": ("account", None),
+    "date range": ("date range", None),
+}
+
+GROUP_SAMPLERS = {
+    "order": lambda r: f"ORD-{r.randint(100000, 999999)}",
+    "invoice": lambda r: f"INV-{r.randint(100000, 999999)}",
+    "tracking": lambda r: f"TRK{r.randint(10**9, 10**10 - 1)}",
+    "person": _sample_person,
+    "city": lambda r: r.choice(["Chicago", "Toronto", "Manchester", "Sydney"]),
+    # No "the ..." names: Bitext often writes "the {{Delivery Country}}"
+    "country": lambda r: r.choice(["Canada", "Ireland", "Australia", "Germany"]),
+    "amount": lambda r: {"currency": "$", "value": str(r.choice([25, 49, 120, 300]))},
+    "account": lambda r: r.choice(ACCOUNT_TIERS),
     "date range": lambda r: r.choice(["3-5", "5-7", "7-10"]),
 }
+
+# When the customer did NOT give a value, the answer must not invent one
+# (a made-up order number or refund amount is exactly the hallucination to
+# avoid). Rewrites for the common Bitext phrasings, then a neutral fallback.
+_NAME_SLOT = r"\{\{\s*(?:salutation|person name|client (?:full |first |last )?name)\s*\}\}"
+NEUTRAL_REWRITES = {
+    "invoice": [
+        # "the invoice with the number #{{Invoice Number}}" -> "the invoice"
+        (r"\s+(?:(?:labeled|labelled|with|the|specific|sacred)\s+)*number\s*#?\s*"
+         r"\{\{\s*invoice number\s*\}\}", ""),
+        (r"\s*#\s*\{\{\s*invoice number\s*\}\}", ""),  # "bill #{{Invoice Number}}"
+    ],
+    "person": [  # "the bill from {{Salutation}} {{Client Last Name}}"
+        (rf"(?:\bthe\s+)?(?:\b(?:Mr|Ms|Mrs|Dr)\.\s+)?{_NAME_SLOT}(?:\s+{_NAME_SLOT})*",
+         "the person you mentioned"),
+    ],
+    "city": [(r"(?:\bthe\s+)?\{\{\s*delivery city\s*\}\}", "your city")],
+    "country": [(r"(?:\bthe\s+)?\{\{\s*delivery country\s*\}\}", "your country")],
+    "amount": [  # "a refund of {{Currency Symbol}}{{Refund Amount}}"
+        (r"(?:\$|\{\{\s*currency symbol\s*\}\})?\s*\{\{\s*(?:refund|money) amount\s*\}\}",
+         "the amount you mentioned"),
+    ],
+    "date range": [  # shipping times are company facts
+        (r"\{\{\s*date range\s*\}\}(?=\s+business days)", "a few"),
+        (r"(?:\bthe\s+)?\{\{\s*date range\s*\}\}", "the date range"),
+    ],
+}
+NEUTRAL_PHRASES = {
+    "order": "order number",
+    "invoice": "invoice number",
+    "tracking": "tracking number",
+    "person": "the person you mentioned",
+    "city": "your city",
+    "country": "your country",
+    "amount": "",  # a leftover {{Currency Symbol}}
+    "account": "new",
+    "date range": "the date range",
+}
+
+# The tier a customer names in plain text ("create a platinum acocunt")
+ACCOUNT_TIER_RE = re.compile(
+    r"(?<![a-z])(?:on|the|a)?(pro|platinum|gold|standard|freemium|premium)(?![a-z])", re.I
+)
 
 # Company facts we must not invent (phone numbers, URLs, hours): use neutral
 # wording that points the customer to the real source.
@@ -77,38 +146,62 @@ GENERIC_PHRASES = {
 }
 
 
-def clean_placeholders(text: str, rng: random.Random, values: dict) -> str:
+def clean_placeholders(text: str, rng: random.Random, values: dict,
+                       sample_missing: bool = True) -> str:
     """
-    Replaces {{Placeholder}} slots. `values` caches entity values so the same
-    slot gets the same value in the instruction and the response. Unknown
-    slots (mostly UI labels like {{Forgot Password}}) keep their label text.
+    Replaces {{Placeholder}} slots. `values` caches one sampled value per entity
+    group, so the instruction and the response agree. With sample_missing=False
+    (the response), groups the customer never gave get neutral wording instead
+    of an invented value. Unknown slots (mostly UI labels like
+    {{Forgot Password}}) keep their label text.
     """
+    if not sample_missing:
+        for group, rewrites in NEUTRAL_REWRITES.items():
+            if group not in values:
+                for pattern, repl in rewrites:
+                    text = re.sub(pattern, repl, text, flags=re.I)
+
     def replace(match):
         label = match.group(1)
         key = label.lower()
-        if key in ENTITY_VALUES:
-            if key not in values:
-                values[key] = ENTITY_VALUES[key](rng)
-            return values[key]
+        if key in ENTITY_SLOTS:
+            group, field = ENTITY_SLOTS[key]
+            if group not in values:
+                if not sample_missing:
+                    return NEUTRAL_PHRASES[group]
+                values[group] = GROUP_SAMPLERS[group](rng)
+            return values[group][field] if field else values[group]
         if key in GENERIC_PHRASES:
             return GENERIC_PHRASES[key]
         return label
 
-    return PLACEHOLDER_RE.sub(replace, text)
+    # Second pass resolves nested slots: {{Switch to {{Account Type}}}}
+    for _ in range(2):
+        text = PLACEHOLDER_RE.sub(replace, text)
+    return text
 
 
 def clean_example(example: dict) -> dict:
     """
     Cleans one Bitext row. Seeded by the row content, so the result is
     deterministic across runs (train and eval see the same cleaned text).
+    Entity values are sampled only for slots in the instruction; the response
+    reuses them and never introduces new ones.
     """
     instruction = example.get('instruction', '')
     response = example.get('response', '')
     rng = random.Random(zlib.crc32((instruction + response).encode("utf-8")))
     values = {}
+    cleaned_instruction = clean_placeholders(instruction, rng, values)
+
+    # The customer often names the tier in plain text ("create a platinum account")
+    tier = ACCOUNT_TIER_RE.search(instruction)
+    if "account" not in values and tier:
+        values["account"] = tier.group(1).capitalize()
+
     return {
-        "instruction": clean_placeholders(instruction, rng, values),
-        "response": clean_placeholders(response, rng, values),
+        "instruction": cleaned_instruction,
+        "response": clean_placeholders(response, rng, values, sample_missing=False),
     }
 
 
