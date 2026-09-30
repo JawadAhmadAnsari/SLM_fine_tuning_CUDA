@@ -21,7 +21,8 @@ pandas
 openpyxl
 pypdf
 sentence-transformers
-langfuse
+# src/observability.py uses the v2 API (Langfuse.trace / trace.event); v3+ removed it
+langfuse>=2,<3
 
 # LoRA / PEFT fine-tuning support
 # NOTE: unsloth_zoo pulls in torchao>=0.13, which breaks on torch 2.5.1 -> run `pip uninstall -y torchao` after installing
