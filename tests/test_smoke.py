@@ -5,9 +5,12 @@ They check the pieces that silently break training/evaluation, not model quality
 
 import pytest
 from datasets import Dataset
+from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
 
 import src.data as data
 import src.observability as obs
+from src.rag import RAGEngine
 from src.utils import get_config, format_prompt, get_stop_token_ids
 
 
@@ -15,10 +18,11 @@ from src.utils import get_config, format_prompt, get_stop_token_ids
 
 def test_config_loads_required_keys():
     config = get_config()
-    for section in ("model", "lora", "dataset", "training", "mlflow", "autoeval", "drift"):
+    for section in ("model", "lora", "dataset", "training", "mlflow", "autoeval", "drift", "rag"):
         assert section in config
     assert config["model"]["max_seq_length"] > 0
     assert config["dataset"]["test_size"] > 0
+    assert 0 < config["rag"]["min_similarity"] < 1
 
 
 def test_output_dir_env_overrides_config(monkeypatch):
@@ -103,6 +107,38 @@ def test_split_is_deterministic_and_disjoint(monkeypatch):
     assert len(test_a) == 20 and len(train_a) == 180
     assert test_a["instruction"] == test_b["instruction"]
     assert not set(test_a["instruction"]) & set(train_a["instruction"])
+
+
+# --- RAG ------------------------------------------------------------------
+
+class KeywordEmbeddings(Embeddings):
+    """Bag-of-keywords vectors: no model download, predictable similarities."""
+    vocab = ["drone", "camera", "laptop", "price", "wifi", "remote"]
+
+    def _embed(self, text):
+        words = text.lower().replace("?", "").split()
+        return [float(w in words) for w in self.vocab] + [0.1]  # bias: never all-zero
+
+    def embed_documents(self, texts):
+        return [self._embed(t) for t in texts]
+
+    def embed_query(self, text):
+        return self._embed(text)
+
+
+def test_retrieve_skips_context_below_similarity_threshold():
+    rag = RAGEngine.__new__(RAGEngine)  # skip __init__'s HF model download
+    rag.embedding_model = KeywordEmbeddings()
+    rag.vector_store = None
+    rag.build_index([
+        Document(page_content="drone camera"),
+        Document(page_content="laptop price"),
+        Document(page_content="remote wifi"),
+    ])
+
+    context = rag.retrieve("does the drone have a camera?", k=3, min_similarity=0.5)
+    assert context == "drone camera"                # weak matches filtered out
+    assert rag.retrieve("reset my password", k=3, min_similarity=0.5) == ""
 
 
 # --- MLflow is optional ---------------------------------------------------

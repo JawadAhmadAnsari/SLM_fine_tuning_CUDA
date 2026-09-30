@@ -37,7 +37,10 @@ def run_inference(message, history):
     """
     Generates a response from the model based on the user's message and conversation history.
     """
-    context = rag_engine.retrieve(message)
+    # Empty when nothing is relevant enough; the prompt then has no Context block
+    context = rag_engine.retrieve(
+        message, k=config['rag']['top_k'], min_similarity=config['rag']['min_similarity']
+    )
     # Trim old turns / context so prompt + reply fit in max_seq_length
     prompt = format_prompt(
         tokenizer, message, history, context,

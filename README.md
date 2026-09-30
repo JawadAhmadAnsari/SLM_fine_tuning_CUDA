@@ -26,7 +26,7 @@ The fine-tuning pipeline is designed to be configuration-driven, ensuring that e
 
 7.  **Experiment Tracking** (optional): If `MLFLOW_TRACKING_URI` is set, params and metrics are logged to MLflow under `mlflow.experiment_name`; otherwise training runs untracked.
 
-8.  **RAG** (`src/rag.py`): LangChain + ChromaDB index the PDF/Excel documents in `data/` and retrieve context at inference time.
+8.  **RAG** (`src/rag.py`): LangChain + ChromaDB index the PDF/Excel documents in `data/` and retrieve context at inference time. Only chunks above a cosine-similarity threshold (`rag.min_similarity`) are used; general support questions that match nothing get no context and are answered from the fine-tuned model alone.
 
 ---
 
@@ -129,6 +129,8 @@ All aspects of the fine-tuning process are controlled by `configs/config.yaml`. 
 |              | `use_rslora`                    | Boolean | If `True`, enables Rank-Stabilized LoRA, which can improve stability.                                   |
 | **dataset** | `path`                          | String  | The Hugging Face path to the training dataset.                                                          |
 |              | `test_size` / `split_seed`      | Integer | Size and seed of the held-out test split. Keep fixed so test rows never leak into training.             |
+| **rag** | `top_k`                         | Integer | Maximum number of document chunks retrieved per question.                                               |
+|              | `min_similarity`                | Float   | Minimum cosine similarity for a chunk to be used as context. Re-measure it if you change the documents in `data/` or the embedding model. |
 | **training** | `per_device_train_batch_size`   | Integer | The batch size per GPU for training.                                                                    |
 |              | `gradient_accumulation_steps` | Integer | Number of steps to accumulate gradients before performing a weight update.                              |
 |              | `max_steps`                     | Integer | The total number of training steps to perform.                                                          |

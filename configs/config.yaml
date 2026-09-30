@@ -37,6 +37,15 @@ dataset:
   test_size: 500
   split_seed: 42
 
+# RAG Retrieval (deployment/app.py, scripts/evaluate.py)
+rag:
+  top_k: 3
+  # Min cosine similarity for a chunk to be used as context. Measured on data/:
+  # catalog/handbook questions score 0.46-0.65, generic Bitext-style questions
+  # ("reset my password", "I need a refund") at most 0.36. Below it, the model
+  # answers without context instead of refusing on irrelevant chunks.
+  min_similarity: 0.42
+
 # Training Arguments
 training:
   per_device_train_batch_size: 1  # MUST be 1 for 4GB VRAM

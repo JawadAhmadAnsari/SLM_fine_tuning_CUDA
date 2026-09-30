@@ -55,20 +55,29 @@ class RAGEngine:
         splits = text_splitter.split_documents(documents)
         
         print("Building Chroma vector store...")
-        self.vector_store = Chroma.from_documents(documents=splits, embedding=self.embedding_model)
+        # Cosine space, so 1 - distance is the cosine similarity used by retrieve()
+        self.vector_store = Chroma.from_documents(
+            documents=splits,
+            embedding=self.embedding_model,
+            collection_metadata={"hnsw:space": "cosine"},
+        )
         print("Vector store built successfully.")
         return self.vector_store
 
-    def retrieve(self, query: str, k: int = 3) -> str:
+    def retrieve(self, query: str, k: int = 3, min_similarity: float = 0.0) -> str:
         """
-        Retrieves the top-k most relevant documents from the vector store.
+        Retrieves up to k documents whose cosine similarity to the query is at
+        least `min_similarity`. Returns "" when nothing clears it, so off-topic
+        questions (e.g. "reset my password") get no context instead of
+        irrelevant chunks that the grounding prompt would force a refusal on.
         """
         if self.vector_store is None:
             raise RuntimeError("Vector store is not built. Please call build_index() first.")
-        
-        print(f"Retrieving top-{k} documents for query: '{query}'")
-        docs = self.vector_store.similarity_search(query, k=k)
-        
+
+        results = self.vector_store.similarity_search_with_score(query, k=k)
+        docs = [doc for doc, distance in results if 1 - distance >= min_similarity]
+        print(f"Retrieved {len(docs)}/{k} documents above similarity {min_similarity} for query: '{query}'")
+
         # Format the retrieved documents into a single context string
         context = "\n---\n".join([doc.page_content for doc in docs])
         return context

@@ -81,7 +81,9 @@ def main():
     for entry in dataset:
         question = entry["question"]
 
-        retrieved_context = rag_engine.retrieve(question)
+        retrieved_context = rag_engine.retrieve(
+            question, k=config['rag']['top_k'], min_similarity=config['rag']['min_similarity']
+        )
         max_new_tokens = 128
         prompt = format_prompt(
             tokenizer, question, history=[], context=retrieved_context,
