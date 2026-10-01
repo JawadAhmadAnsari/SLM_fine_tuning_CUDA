@@ -13,16 +13,16 @@ datasets==4.3.0
 evaluate==0.4.6
 rouge_score==0.1.2
 psutil==7.2.2
-langchain
+langchain==1.2.9
 langchain-community==0.4.1
 langchain-text-splitters==1.1.0
-chromadb
+chromadb==1.4.1
 pandas
 openpyxl
 pypdf
-sentence-transformers
+sentence-transformers==5.2.2
 # src/observability.py uses the v2 API (Langfuse.trace / trace.event); v3+ removed it
-langfuse>=2,<3
+langfuse==2.60.10
 
 # LoRA / PEFT fine-tuning support
 # NOTE: unsloth_zoo pulls in torchao>=0.13, which breaks on torch 2.5.1 -> run `pip uninstall -y torchao` after installing
@@ -31,7 +31,7 @@ peft==0.18.1
 trl==0.24.0
 
 # Experiment tracking and deployment
-mlflow
+mlflow==3.9.0
 boto3
 python-dotenv
 huggingface_hub
