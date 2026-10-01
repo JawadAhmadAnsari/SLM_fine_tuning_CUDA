@@ -3,6 +3,7 @@
 import os
 import sys
 from datasets import Dataset
+from dotenv import find_dotenv, load_dotenv
 from ragas import evaluate
 
 from openai import OpenAI
@@ -26,6 +27,11 @@ def main():
     """
     Main function to run the RAG evaluation.
     """
+
+    # The RAGAS judge needs OpenAI: fail now, not after loading the model and generating
+    load_dotenv(dotenv_path=find_dotenv(usecwd=True), override=True)
+    if not os.getenv("OPENAI_API_KEY"):
+        raise RuntimeError("OPENAI_API_KEY is not set (env or .env); RAGAS needs it as the judge.")
 
     # --- 1. Load Configuration and Models ---
     print("Loading configuration and models...")
@@ -130,15 +136,14 @@ def main():
         client=client,
     )
 
-    try:
-        result = evaluate(
-            dataset=results_dataset,
-            metrics=metrics,
-            llm=evaluator_llm,
-        )
-    except Exception as e:
-        print(f"RAGAS evaluation failed: {e}")
-        result = {}
+    # raise_exceptions=True: by default RAGAS turns a failed judge call into a
+    # NaN score, so a broken run would still look complete
+    result = evaluate(
+        dataset=results_dataset,
+        metrics=metrics,
+        llm=evaluator_llm,
+        raise_exceptions=True,
+    )
 
     print("Evaluation complete.")
     print("--- RAGAS Evaluation Results ---")
