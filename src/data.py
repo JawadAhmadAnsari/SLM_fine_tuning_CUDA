@@ -108,7 +108,7 @@ NEUTRAL_REWRITES = {
     ],
     "date range": [  # shipping times are company facts
         (r"\{\{\s*date range\s*\}\}(?=\s+business days)", "a few"),
-        (r"(?:\bthe\s+)?\{\{\s*date range\s*\}\}", "the date range"),
+        (r"(?:\bthe\s+)?(?:specific\s+)?\{\{\s*date range\s*\}\}", "the date range"),
     ],
 }
 NEUTRAL_PHRASES = {
@@ -146,6 +146,11 @@ GENERIC_PHRASES = {
     "company": "our company",
     "live chat support": "Live Chat",
 }
+
+# A replacement can repeat the word before its slot ("our {{Website URL}}" ->
+# "our our website"). Raw Bitext responses contain no doubled words, so any
+# found after cleanup came from the cleanup.
+DOUBLED_WORD_RE = re.compile(r"\b(\w+)(?:\s+\1\b)+", re.I)
 
 
 def clean_placeholders(text: str, rng: random.Random, values: dict,
@@ -201,9 +206,12 @@ def clean_example(example: dict) -> dict:
     if "account" not in values and tier:
         values["account"] = tier.group(1).capitalize()
 
+    cleaned_response = clean_placeholders(response, rng, values, sample_missing=False)
+
+    # Only the response: typos in the customer's message are realistic input
     return {
         "instruction": cleaned_instruction,
-        "response": clean_placeholders(response, rng, values, sample_missing=False),
+        "response": DOUBLED_WORD_RE.sub(r"\1", cleaned_response),
     }
 
 

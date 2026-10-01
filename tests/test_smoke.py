@@ -122,6 +122,17 @@ def test_answer_never_invents_values_the_customer_did_not_give():
     )
 
 
+@pytest.mark.parametrize("response, expected", [
+    ("Visit our {{Website URL}} today.", "Visit our website today."),
+    ("Here is the invoice {{Invoice Number}}.", "Here is the invoice number."),
+    ("Please give the specific {{Date Range}}.", "Please give the date range."),
+    ("Log in to your {{Online Company Portal Info}} account.", "Log in to your online account."),
+])
+def test_cleanup_leaves_no_doubled_words(response, expected):
+    cleaned = data.clean_example({"instruction": "help me", "response": response})
+    assert cleaned["response"] == expected
+
+
 def test_split_is_deterministic_and_disjoint(monkeypatch):
     rows = {
         "instruction": [f"question {i}" for i in range(200)],
