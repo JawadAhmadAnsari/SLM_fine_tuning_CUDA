@@ -22,7 +22,7 @@ The fine-tuning pipeline is designed to be configuration-driven, ensuring that e
 
 5.  **Model Loading** (`src/model.py`): Unsloth's `FastLanguageModel` loads the pre-quantized 4-bit base model and applies the LoRA configuration from `config.yaml`.
 
-6.  **Training Execution** (`src/train.py`): `trl.SFTTrainer` with an `SFTConfig` built from the `training` section of `config.yaml`. The adapter is saved to `<output_dir>/final_model`.
+6.  **Training Execution** (`src/train.py`): `trl.SFTTrainer` with an `SFTConfig` built from the `training` section of `config.yaml`. Loss is computed only on the assistant reply (Unsloth's `train_on_responses_only`); the system prompt and customer message are masked out. The adapter is saved to `<output_dir>/final_model`.
 
 7.  **Experiment Tracking** (optional): If `MLFLOW_TRACKING_URI` is set, params and metrics are logged to MLflow under `mlflow.experiment_name`; otherwise training runs untracked.
 

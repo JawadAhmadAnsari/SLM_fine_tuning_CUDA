@@ -8,6 +8,7 @@ import psutil
 builtins.psutil = psutil
 
 from unsloth import FastLanguageModel
+from unsloth.chat_templates import train_on_responses_only
 import os
 import torch
 from trl import SFTConfig, SFTTrainer
@@ -111,6 +112,20 @@ def train(trace=None):
         train_dataset=formatted_dataset,
         args=training_args,
     )
+
+    # Loss only on the assistant reply (plus <|end|>/EOS): system prompt and
+    # user turn are masked to -100. Markers follow Phi-3's chat template.
+    # num_proc=1: multiprocessing map spawns slow, fragile workers on Windows.
+    trainer = train_on_responses_only(
+        trainer,
+        instruction_part="<|user|>\n",
+        response_part="<|assistant|>\n",
+        num_proc=1,
+    )
+    # A marker mismatch would silently mask every token (zero loss), so check one row
+    first_labels = trainer.train_dataset[0]["labels"]
+    if all(label == -100 for label in first_labels):
+        raise ValueError("Response masking left no trainable tokens; check the chat-template markers.")
 
     # 9. Start Training
     print("Starting training...")
