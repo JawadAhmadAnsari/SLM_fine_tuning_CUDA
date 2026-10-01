@@ -128,6 +128,7 @@ All aspects of the fine-tuning process are controlled by `configs/config.yaml`. 
 |              | `lora_dropout`                  | Float   | Dropout probability for the LoRA layers to prevent overfitting.                                         |
 |              | `use_rslora`                    | Boolean | If `True`, enables Rank-Stabilized LoRA, which can improve stability.                                   |
 | **dataset** | `path`                          | String  | The Hugging Face path to the training dataset.                                                          |
+|              | `revision`                      | String  | Hub commit of the dataset. Pinned so upstream edits can't change the data or the split.                 |
 |              | `test_size` / `split_seed`      | Integer | Size and seed of the held-out test split. Keep fixed so test rows never leak into training.             |
 | **rag** | `top_k`                         | Integer | Maximum number of document chunks retrieved per question.                                               |
 |              | `min_similarity`                | Float   | Minimum cosine similarity for a chunk to be used as context. Re-measure it if you change the documents in `data/` or the embedding model. |

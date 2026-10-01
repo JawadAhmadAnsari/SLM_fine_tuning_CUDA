@@ -14,12 +14,14 @@ def load_splits(config: dict):
     Loads the dataset and carves out a held-out test set.
 
     Bitext ships only a "train" split, so we split it ourselves. The split is
-    deterministic (fixed seed + fixed size), so training and evaluation always
+    deterministic (pinned revision + fixed seed + fixed size), so training and evaluation always
     see the same partition and the test rows are never trained on.
     Returns (train_dataset, test_dataset).
     """
     dataset_config = config['dataset']
-    dataset = load_dataset(dataset_config['path'], split="train")
+    dataset = load_dataset(
+        dataset_config['path'], revision=dataset_config['revision'], split="train"
+    )
     splits = dataset.train_test_split(
         test_size=dataset_config['test_size'],
         seed=dataset_config['split_seed'],

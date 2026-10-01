@@ -32,6 +32,9 @@ lora:
 # Dataset Configuration
 dataset:
   path: "bitext/Bitext-customer-support-llm-chatbot-training-dataset"
+  # Hub commit (2024-07-18). Pinned so an upstream edit can't silently change
+  # the data or reshuffle the train/test split.
+  revision: "430d1a89bd93bd1fa23c16f29dd53e73f0087443"
   # Bitext has only a train split; a held-out test set is carved out of it.
   # Keep these fixed so the test set never leaks into training.
   test_size: 500

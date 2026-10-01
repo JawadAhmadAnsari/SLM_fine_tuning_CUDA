@@ -127,11 +127,18 @@ def test_split_is_deterministic_and_disjoint(monkeypatch):
         "instruction": [f"question {i}" for i in range(200)],
         "response": [f"answer {i}" for i in range(200)],
     }
-    monkeypatch.setattr(data, "load_dataset", lambda *a, **k: Dataset.from_dict(rows))
-    config = {"dataset": {"path": "stub", "test_size": 20, "split_seed": 42}}
+    calls = []
+
+    def fake_load_dataset(*args, **kwargs):
+        calls.append(kwargs)
+        return Dataset.from_dict(rows)
+
+    monkeypatch.setattr(data, "load_dataset", fake_load_dataset)
+    config = {"dataset": {"path": "stub", "revision": "abc123", "test_size": 20, "split_seed": 42}}
 
     train_a, test_a = data.load_splits(config)
     train_b, test_b = data.load_splits(config)
+    assert all(call["revision"] == "abc123" for call in calls)
     assert len(test_a) == 20 and len(train_a) == 180
     assert test_a["instruction"] == test_b["instruction"]
     assert not set(test_a["instruction"]) & set(train_a["instruction"])
