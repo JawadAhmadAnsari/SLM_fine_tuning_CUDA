@@ -6,6 +6,9 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_core.documents import Document
+
+from src.kb import load_sections
 
 class RAGEngine:
     def __init__(self, model_name="all-MiniLM-L6-v2"):
@@ -17,13 +20,21 @@ class RAGEngine:
 
     def load_documents(self, path: str):
         """
-        Loads documents from a file path. Supports PDF and Excel files.
+        Loads documents from a file path. Supports Markdown knowledge bases
+        (one document per "## " section), PDF and Excel files.
         Returns an empty list if the file is not found.
         """
         _, file_extension = os.path.splitext(path)
         
         try:
-            if file_extension.lower() == '.pdf':
+            if file_extension.lower() == '.md':
+                return [
+                    Document(page_content=s["content"],
+                             metadata={"title": s["title"], "source": s["source"] or path})
+                    for s in load_sections(path)
+                ]
+
+            elif file_extension.lower() == '.pdf':
                 loader = PyPDFLoader(path)
                 return loader.load()
             
@@ -33,7 +44,6 @@ class RAGEngine:
                 for _, row in df.iterrows():
                     text = ", ".join([f"{col}: {val}" for col, val in row.items()])
                     documents.append(text)
-                from langchain_core.documents import Document
                 return [Document(page_content=doc) for doc in documents]
             
             else:

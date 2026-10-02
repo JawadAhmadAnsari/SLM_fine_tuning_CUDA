@@ -75,10 +75,11 @@ def train(trace=None):
     print(f"Train rows: {len(train_dataset)} | Held-out test rows: {len(test_dataset)}")
 
     # Replace {{Placeholders}}, then apply the shared chat-template format (ends in EOS)
-    formatted_dataset = train_dataset.map(clean_example).map(
+    cleaned_dataset = train_dataset.map(clean_example)
+    formatted_dataset = cleaned_dataset.map(
         format_training_example,
         fn_kwargs={"tokenizer": tokenizer},
-        remove_columns=train_dataset.column_names,
+        remove_columns=cleaned_dataset.column_names,  # keep only "text"
     )
     print("Dataset formatted successfully.")
 

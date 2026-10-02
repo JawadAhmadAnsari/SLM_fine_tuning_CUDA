@@ -1,6 +1,6 @@
 autoeval:
   # Evaluates on the held-out test split defined under `dataset` in config.yaml
-  num_samples: 50                    # limit for speed
+  num_samples: 80                    # limit for speed
   max_new_tokens: 256                # Bitext answers are paragraph-length
   # Score is ROUGE-L F1 (0-1); the drift thresholds below are drops in this score
   enable: true

@@ -1,13 +1,12 @@
 # scripts/inference.py
 
-import torch
-from transformers import TextStreamer
 import sys
 import os
 
 # Add the src directory to the Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
+from src.facts import build_context, guard
 from src.model import load_model_for_inference
 from src.utils import get_config, format_prompt, get_stop_token_ids
 
@@ -30,22 +29,22 @@ def run_inference(prompt: str):
     model, tokenizer = load_model_for_inference(config, model_path)
     
     print("Model loaded. Running inference...")
-    
-    # Use a TextStreamer for real-time output
-    streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
 
-    # Use the centralized prompt formatting function
-    formatted_prompt = format_prompt(tokenizer, prompt)
+    # Verified answer (prices, city verdicts) as context, like the app; no KB retrieval here
+    context = build_context(prompt)
+    formatted_prompt = format_prompt(tokenizer, prompt, context=context or None)
 
     inputs = tokenizer([formatted_prompt], return_tensors="pt").to(model.device)
 
-    # Generate response
-    _ = model.generate(
+    output = model.generate(
         **inputs,
-        streamer=streamer,
         max_new_tokens=256,
+        do_sample=False,
         eos_token_id=get_stop_token_ids(tokenizer),
     )
+    answer = tokenizer.decode(output[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
+    # Same figure check as the app
+    print(guard(answer.strip(), context, prompt))
 
 
 if __name__ == "__main__":

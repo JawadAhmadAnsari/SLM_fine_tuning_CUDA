@@ -1,15 +1,19 @@
 # src/utils.py
 
 import os
+import re
 import yaml
 import collections.abc
 
 
 SYSTEM_PROMPT = (
-    "You are a helpful, respectful and honest customer support assistant. "
-    "When context is provided, answer using only that context. "
-    "If the answer isn't in the context, say you don't know and offer to "
-    "connect the customer with a human agent."
+    "You are the virtual customer support assistant for PakWheels.com, Pakistan's "
+    "marketplace for cars, bikes and auto parts. Help with buying and selling vehicles, "
+    "ads, accounts and PakWheels services. When context is provided, take prices, fees, "
+    "cities and contact details only from it and never invent them. If you are not sure, "
+    "say so and suggest the PakWheels helpline (042-111-943-357, 9 am to 9 pm daily). "
+    "Politely decline questions unrelated to cars or PakWheels. Never ask for passwords, "
+    "OTPs or card numbers, and never share bank account details."
 )
 
 
@@ -36,16 +40,91 @@ def _history_to_messages(history: list) -> list:
     return messages
 
 
+def _user_content(user_query: str, context: str = None) -> str:
+    """The user turn: the question, preceded by retrieved context when there is any."""
+    if context:
+        return f"Context:\n{context}\n\nQuestion: {user_query}"
+    return user_query
+
+
 def _render_generation_prompt(tokenizer, history_messages: list,
                               user_query: str, context: str = None) -> str:
-    if context:
-        user_query = f"Context:\n{context}\n\nQuestion: {user_query}"
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     messages += history_messages
-    messages.append({"role": "user", "content": user_query})
+    messages.append({"role": "user", "content": _user_content(user_query, context)})
     return tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
     )
+
+
+# Follow-ups that only make sense with the previous question ("And what about a
+# 1000cc car?", "aur Corolla ke liye?"). Matched on the opening words only, so a
+# new short question ("Where is my order?") is not mixed with the last topic.
+FOLLOW_UP_RE = re.compile(
+    r"^\s*(?:and|aur|also|or|what about|how about|same for|what if|for (?:a|an|the|my))\b", re.I
+)
+
+# Roman Urdu -> English for the retrieval query only. The embedding model is
+# English-only, so filler words ("hai", "ki", "mein") otherwise decide which
+# section is retrieved. The model still sees the customer's original message.
+ROMAN_URDU = {
+    "gari": "car", "gaari": "car", "gadi": "car", "gaadi": "car",
+    "bechni": "sell", "bechna": "sell", "bechun": "sell", "becha": "sell",
+    "lagaun": "post", "lagana": "post", "lagayen": "post", "lagta": "cost", "lagte": "cost",
+    "paise": "price", "paisay": "price", "qeemat": "price", "keemat": "price", "kharcha": "cost",
+    "fees": "fee", "kitni": "how much", "kitne": "how much", "kitna": "how much",
+    "wapas": "return", "rang": "colour", "pasand": "like", "shehar": "city",
+    "milega": "get", "milegi": "get", "kab": "when", "kaise": "how", "kahan": "where",
+    "chalegi": "eligible", "chalega": "eligible",
+    "bech": "sell", "bik": "sell", "biki": "sold", "milti": "available", "milta": "available",
+    "zariye": "through", "shuru": "start", "dalun": "post", "dalna": "post",
+}
+ROMAN_URDU_FILLER = {
+    "hai", "hain", "ki", "ke", "ka", "ko", "mein", "main", "mai", "se", "ne", "liye", "karun",
+    "karna", "karni", "karwani", "karwana", "kya", "kar", "sakta", "sakti", "sakte", "hoga",
+    "hogi", "nahi", "aaya", "aayi", "mujhe", "meri", "mera", "apni", "apna", "aap", "ho",
+    "wale", "bhi", "banega", "dein", "dena", "honge", "hoon", "hun",
+}
+_WORD_RE = re.compile(r"[A-Za-z']+|[^A-Za-z']+")
+
+
+def normalize_roman_urdu(text: str) -> str:
+    """Translates common Roman Urdu words and drops filler, keeping everything else."""
+    out = []
+    for token in _WORD_RE.findall(text):
+        word = token.lower()
+        if word in ROMAN_URDU_FILLER:
+            continue
+        out.append(ROMAN_URDU.get(word, token))
+    text = re.sub(r"\s+", " ", "".join(out))
+    return re.sub(r"\s+([,.?!])", r"\1", text).strip()
+
+
+def recent_history(history: list, max_turns: int) -> list:
+    """
+    The last `max_turns` user/assistant exchanges as messages. Training rows have
+    at most 2 earlier exchanges; a longer chat gives the model many unrelated
+    answers to copy from, so older turns are dropped.
+    """
+    messages = _history_to_messages(history or [])
+    user_starts = [i for i, m in enumerate(messages) if m["role"] == "user"]
+    if max_turns <= 0 or not user_starts:
+        return []
+    return messages[user_starts[-min(max_turns, len(user_starts))]:]
+
+
+def retrieval_query(message: str, history: list = None) -> str:
+    """
+    The text to search the knowledge base with. A follow-up ("and for a 1000cc
+    car?") carries little meaning alone, so it is prefixed with the previous user
+    message. Roman Urdu words are translated for the English embedding model.
+    """
+    query = message
+    if history and FOLLOW_UP_RE.match(message):
+        previous = [m["content"] for m in _history_to_messages(history) if m["role"] == "user"]
+        if previous:
+            query = f"{previous[-1]} {message}"
+    return normalize_roman_urdu(query)
 
 
 def _count_tokens(tokenizer, text: str) -> int:
@@ -63,7 +142,8 @@ def format_prompt(tokenizer, user_query: str, history: list = None,
       If `max_prompt_tokens` is set, the oldest history turns are dropped (then
       the retrieved context is truncated) until the prompt fits.
     - With `response`: returns a complete training example ending in eos_token,
-      so the model learns to stop.
+      so the model learns to stop. `context` is included the same way as at
+      inference, so RAG-grounded rows train on the exact retrieved format.
     """
     history_messages = _history_to_messages(history or [])
 
@@ -90,7 +170,7 @@ def format_prompt(tokenizer, user_query: str, history: list = None,
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     messages += history_messages
-    messages.append({"role": "user", "content": user_query})
+    messages.append({"role": "user", "content": _user_content(user_query, context)})
     messages.append({"role": "assistant", "content": response})
     text = tokenizer.apply_chat_template(messages, tokenize=False)
     if not text.endswith(tokenizer.eos_token):

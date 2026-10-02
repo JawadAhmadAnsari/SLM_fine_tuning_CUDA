@@ -47,8 +47,9 @@ class AutoEvalEngine:
         self.rouge = evaluate.load("rouge")
 
     @torch.inference_mode()
-    def generate_answer(self, instruction: str) -> str:
-        prompt = format_prompt(self.tokenizer, instruction)
+    def generate_answer(self, instruction: str, context: str = None, history: list = None) -> str:
+        prompt = format_prompt(self.tokenizer, instruction, history=history or [],
+                               context=context or None)
         inputs = self.tokenizer([prompt], return_tensors="pt").to(self.model.device)
         output = self.model.generate(
             **inputs,
@@ -70,7 +71,8 @@ class AutoEvalEngine:
 
         for i, sample in enumerate(self.dataset):
             print(f"Evaluating {i+1}/{len(self.dataset)}", end="\r")
-            pred = self.generate_answer(sample["instruction"])
+            pred = self.generate_answer(sample["instruction"], sample.get("context"),
+                                        sample.get("history"))
             predictions.append(pred)
             references.append(sample["response"])
 

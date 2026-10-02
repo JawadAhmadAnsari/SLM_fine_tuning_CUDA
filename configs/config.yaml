@@ -31,30 +31,38 @@ lora:
 
 # Dataset Configuration
 dataset:
-  path: "bitext/Bitext-customer-support-llm-chatbot-training-dataset"
-  # Hub commit (2024-07-18). Pinned so an upstream edit can't silently change
-  # the data or reshuffle the train/test split.
-  revision: "430d1a89bd93bd1fa23c16f29dd53e73f0087443"
-  # Bitext has only a train split; a held-out test set is carved out of it.
+  # PakWheels customer-support demo (build it with scripts/build_pakwheels_dataset.py).
+  # A local .jsonl/.json/.csv file with instruction/response (and optional context) columns.
+  path: "data/pakwheels/pakwheels_support.jsonl"
+  # To train on the original Bitext dataset instead, use:
+  # path: "bitext/Bitext-customer-support-llm-chatbot-training-dataset"
+  # revision: "430d1a89bd93bd1fa23c16f29dd53e73f0087443"   # Hub commit, pinned
+  revision: null        # only used for Hub datasets
+  # Neither source has a test split; a held-out test set is carved out of it.
   # Keep these fixed so the test set never leaks into training.
-  test_size: 500
+  # Local files: number of held-out QUESTIONS (all their rows, ~80 for PakWheels).
+  # Hub datasets: number of rows (use 500 for Bitext).
+  test_size: 50
   split_seed: 42
 
 # RAG Retrieval (deployment/app.py, scripts/evaluate.py)
 rag:
-  top_k: 3
-  # Min cosine similarity for a chunk to be used as context. Measured on data/:
-  # catalog/handbook questions score 0.46-0.65, generic Bitext-style questions
-  # ("reset my password", "I need a refund") at most 0.36. Below it, the model
-  # answers without context instead of refusing on irrelevant chunks.
-  min_similarity: 0.42
+  # Knowledge base indexed at startup; one chunk per "## " section
+  documents:
+    - "data/pakwheels/knowledge_base.md"
+  # 2 sections (~250 tokens) leave room for chat history in the 1024-token window
+  top_k: 2
+  # Min cosine similarity for a chunk to be used as context. PROVISIONAL for the
+  # PakWheels knowledge base: re-measure with scripts/measure_rag_threshold.py
+  # (in-scope questions should clear it, off-topic ones should not).
+  min_similarity: 0.36
 
 # Training Arguments
 training:
   per_device_train_batch_size: 1  # MUST be 1 for 4GB VRAM
   gradient_accumulation_steps: 8  # Increased to 8 to compensate for batch size 1
   warmup_steps: 5
-  max_steps: 60
+  max_steps: 285   # ~2 epochs of the 1128-row PakWheels v7 train split (8 rows/step)
   learning_rate: 0.0002
   fp16: False 
   bf16: True       # RTX 3050 supports BF16 (Ampere), better stability than FP16
@@ -69,8 +77,13 @@ training:
 # MLflow Configuration
 mlflow:
   experiment_name: "SLM_FineTuning_Experiments"
-  run_name: "phi-3-mini-customer-support"
+  # run_name: "phi-3-mini-customer-support"
+  run_name: "phi-3-mini-pakwheels-support" 
 
 # Deployment Configuration
 deployment:
-  hf_hub_repo: "jawadahmadansari/SLM-fine-tuned-model-local"
+  # hf_hub_repo: "jawadahmadansari/SLM-fine-tuned-model-local"
+  hf_hub_repo: "jawadahmadansari/pakwheels-support-phi3-lora"
+  # Previous user/assistant exchanges sent to the model. Training rows have at
+  # most 2; longer chats made the model copy earlier, unrelated answers.
+  max_history_turns: 2

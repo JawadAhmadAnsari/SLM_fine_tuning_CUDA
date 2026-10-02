@@ -18,6 +18,7 @@ from ragas.metrics import (
 # Add src directory to Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
+from src.facts import build_context, guard
 from src.rag import RAGEngine
 from src.model import load_model_for_inference
 from src.utils import get_config, format_prompt, get_stop_token_ids
@@ -46,35 +47,32 @@ def main():
     print("Initializing RAG Engine...")
     rag_engine = RAGEngine()
 
-    product_docs = rag_engine.load_documents("data/product_catalog.xlsx")
-    handbook_docs = rag_engine.load_documents("data/employee_handbook.pdf")
-    all_docs = product_docs + handbook_docs
+    all_docs = []
+    for doc_path in config['rag']['documents']:
+        all_docs += rag_engine.load_documents(doc_path)
 
     rag_engine.build_index(all_docs)
     print("RAG Engine initialized and index built.")
 
     # --- 3. Define Golden Dataset ---
+    # PakWheels questions whose answers are in data/pakwheels/knowledge_base.md
     golden_dataset = {
         "question": [
-            "What is the return policy for the Laptop Pro X?",
-            "How much does the Smartwatch Series 5 cost?",
-            "What are the features of the Drone Explorer?",
-            "Can I use public Wi-Fi when working remotely?",
-            "How do I get reimbursed for office supplies?",
+            "How much does it cost to feature my car ad for 14 days?",
+            "What are the Sell It For Me charges for a 1300cc car?",
+            "Which cities is PakWheels car inspection available in?",
+            "Can I return car accessories if I change my mind?",
+            "What are PakWheels support hours?",
         ],
         "ground_truth": [
-            "The return policy for the Laptop Pro X is a 30-day money-back guarantee.",
-            "The Smartwatch Series 5 costs $399.99.",
-            "The Drone Explorer features a 4K camera and a 30-minute flight time.",
-            "No, use of public Wi-Fi for sensitive work is strictly prohibited according to the remote work policy.",
-            "To get reimbursed for office supplies, you must submit an expense report with original receipts within 30 days, after getting pre-approval from your manager.",
-        ],
-        "ground_truth_context": [
-            "Product_ID: ELE-001, Name: Laptop Pro X, Price: 1299.99, Features: 16GB RAM, 512GB SSD, Intel i7, Return_Policy: 30-day money-back guarantee",
-            "Product_ID: ELE-007, Name: Smartwatch Series 5, Price: 399.99, Features: GPS, Heart Rate Monitor, Return_Policy: 30-day money-back guarantee",
-            "Product_ID: ELE-011, Name: Drone Explorer, Price: 899.99, Features: 4K camera, 30-min flight time, Return_Policy: 30-day money-back guarantee",
-            "The company will provide necessary equipment, including a laptop and monitor. Employees are responsible for maintaining a secure and ergonomic home office setup. All company data must be handled in accordance with our data security policies. Use of public Wi-Fi for sensitive work is strictly prohibited.",
-            "All work-related expenses must be pre-approved by your manager. To request reimbursement, submit an expense report with original receipts within 30 days of the purchase. Reimbursable expenses include travel, office supplies, and pre-approved software.",
+            "Featuring one ad for 14 days costs PKR 4,450.",
+            "A 1300cc car has a non-refundable onboarding fee of PKR 5,000, plus a 1% commission "
+            "on the selling price after the sale (minimum PKR 5,000 if sold for 5 lakh or less).",
+            "Karachi, Lahore, Islamabad, Rawalpindi, Peshawar, Faisalabad, Gujranwala, Gujrat, "
+            "Hyderabad, Multan, Sargodha and Sialkot.",
+            "No. Change of mind is not accepted for car or bike accessories; returns are accepted "
+            "for damaged, defective, incomplete, wrong or mismatched items within 3 business days.",
+            "Human support is available Monday to Sunday, 9 am to 9 pm, on 042-111-943-357.",
         ],
     }
 
@@ -87,9 +85,9 @@ def main():
     for entry in dataset:
         question = entry["question"]
 
-        retrieved_context = rag_engine.retrieve(
+        retrieved_context = build_context(question, [], rag_engine.retrieve(
             question, k=config['rag']['top_k'], min_similarity=config['rag']['min_similarity']
-        )
+        ))
         max_new_tokens = 128
         prompt = format_prompt(
             tokenizer, question, history=[], context=retrieved_context,
@@ -105,7 +103,8 @@ def main():
 
         # Decode only the newly generated tokens
         new_tokens = outputs[0][inputs["input_ids"].shape[1]:]
-        answer = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+        answer = guard(tokenizer.decode(new_tokens, skip_special_tokens=True).strip(),
+                       retrieved_context, question)
 
         results.append(
             {

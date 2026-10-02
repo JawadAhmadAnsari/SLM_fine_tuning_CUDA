@@ -1,5 +1,6 @@
 # src/data.py
 
+import os
 import random
 import re
 import zlib
@@ -9,25 +10,68 @@ from datasets import load_dataset
 from src.utils import format_prompt
 
 
+LOCAL_DATA_FORMATS = {".jsonl": "json", ".json": "json", ".csv": "csv"}
+
+
 def load_splits(config: dict):
     """
     Loads the dataset and carves out a held-out test set.
 
-    Bitext ships only a "train" split, so we split it ourselves. The split is
-    deterministic (pinned revision + fixed seed + fixed size), so training and evaluation always
-    see the same partition and the test rows are never trained on.
+    `dataset.path` is either a Hugging Face Hub dataset (e.g. Bitext, pinned
+    with `dataset.revision`) or a local .jsonl/.json/.csv file with
+    `instruction` and `response` columns (an optional `context` column holds
+    retrieved knowledge-base text for RAG-grounded rows).
+
+    Neither source ships a test split, so we split it ourselves. The split is
+    deterministic (pinned data + fixed seed + fixed size), so training and
+    evaluation always see the same partition and the test rows are never trained on.
+    Local files repeat questions (with/without context), so they are split by
+    question and `test_size` counts questions; Hub datasets are split by row.
     Returns (train_dataset, test_dataset).
     """
     dataset_config = config['dataset']
-    dataset = load_dataset(
-        dataset_config['path'], revision=dataset_config['revision'], split="train"
-    )
+    path = dataset_config['path']
+    extension = os.path.splitext(path)[1].lower()
+    if extension in LOCAL_DATA_FORMATS:
+        if not os.path.isfile(path):
+            raise FileNotFoundError(
+                f"Dataset file not found: {path}. For the PakWheels demo, run "
+                "`python scripts/build_pakwheels_dataset.py` first."
+            )
+        dataset = load_dataset(LOCAL_DATA_FORMATS[extension], data_files=path, split="train")
+        return _split_by_question(dataset, dataset_config['test_size'], dataset_config['split_seed'])
+
+    # Hub datasets keep the row split, so Bitext's pinned test set is unchanged
+    dataset = load_dataset(path, revision=dataset_config.get('revision'), split="train")
     splits = dataset.train_test_split(
         test_size=dataset_config['test_size'],
         seed=dataset_config['split_seed'],
         shuffle=True,
     )
     return splits['train'], splits['test']
+
+
+def _split_by_question(dataset, test_size: int, seed: int):
+    """
+    Holds out whole questions: every row sharing a question (e.g. the with- and
+    without-context variants) lands on the same side, so no test question is trained on.
+    Multi-turn rows whose history contains a test question are left out of
+    training too, since their history carries that question's answer.
+    """
+    keys = [q.strip().lower() for q in dataset["instruction"]]
+    questions = sorted(set(keys))
+    random.Random(seed).shuffle(questions)
+    test_questions = set(questions[:test_size])
+    histories = dataset["history"] if "history" in dataset.column_names else [[]] * len(keys)
+
+    def history_is_held_out(history):
+        return any(m["role"] == "user" and m["content"].strip().lower() in test_questions
+                   for m in history or [])
+
+    test_idx = [i for i, k in enumerate(keys) if k in test_questions]
+    train_idx = [i for i, k in enumerate(keys)
+                 if k not in test_questions and not history_is_held_out(histories[i])]
+    return dataset.select(train_idx), dataset.select(test_idx)
 
 
 # --- Bitext {{Placeholder}} handling ---------------------------------------
@@ -212,16 +256,24 @@ def clean_example(example: dict) -> dict:
     return {
         "instruction": cleaned_instruction,
         "response": DOUBLED_WORD_RE.sub(r"\1", cleaned_response),
+        # RAG-grounded rows (local datasets) carry retrieved text; Bitext has none
+        "context": example.get('context') or "",
+        # Earlier turns of multi-turn rows (local datasets); Bitext is single-turn
+        "history": example.get('history') or [],
     }
 
 
 def format_training_example(example: dict, tokenizer) -> dict:
     """
-    Formats one cleaned row with the shared chat-template prompt.
-    Returns a dict with a 'text' key, ending in eos_token.
+    Formats one cleaned row with the shared chat-template prompt, including its
+    earlier turns and retrieved context (if any) exactly as the app sends them
+    at inference. Returns a dict with a 'text' key, ending in eos_token.
     """
     return {
         "text": format_prompt(
-            tokenizer, example['instruction'], response=example['response']
+            tokenizer, example['instruction'],
+            history=example.get('history') or [],
+            context=example.get('context') or None,
+            response=example['response'],
         )
     }
